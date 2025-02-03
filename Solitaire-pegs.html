@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Peg Solitaire with Coordinates and Move History</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+    }
+    #controls {
+      margin: 10px;
+    }
+    canvas {
+      border: 1px solid black;
+      display: block;
+      margin: 0 auto;
+      background-color: #f0f0f0;
+    }
+    button {
+      margin: 0 5px;
+      padding: 5px 10px;
+    }
+    #moveHistory {
+      margin-top: 10px;
+      text-align: left;
+      width: 550px;
+      margin-left: auto;
+      margin-right: auto;
+      border: 1px solid #aaa;
+      padding: 5px;
+      max-height: 200px;
+      overflow-y: auto;
+      background: #fff;
+    }
+    .moveStep {
+      cursor: pointer;
+      padding: 2px;
+    }
+    .moveStep:hover {
+      background: #eef;
+    }
+    .selectedStep {
+      background: #ddf;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button id="resetButton">Reset</button>
+    <button id="hintButton">Hint</button>
+    <button id="solveButton">Solve</button>
+    <span id="highscoreDisplay">Highscore: 32</span>
+  </div>
+  <canvas id="gameCanvas" width="550" height="550"></canvas>
+  <div id="moveHistory"></div>
+
+  <script>
+    // ******** Constants and Global Variables ********
+    // Board definition: " " = invalid, "O" = peg, "." = empty.
+    const initialBoardData = [
+      [" ", " ", "O", "O", "O", " ", " "],
+      [" ", " ", "O", "O", "O", " ", " "],
+      ["O", "O", "O", "O", "O", "O", "O"],
+      ["O", "O", "O", ".", "O", "O", "O"],
+      ["O", "O", "O", "O", "O", "O", "O"],
+      [" ", " ", "O", "O", "O", " ", " "],
+      [" ", " ", "O", "O", "O", " ", " "]
+    ];
+    let board = initialBoardData.map(row => row.slice());
+    let selected = null; // currently selected peg { row, col }
+    let highscore = countPegs(board);
+    let animating = false;
+    let moveHistory = []; // Each element: { moveStr, boardState }  
+    // Save initial state as move 0.
+    moveHistory.push({ moveStr: "Start", boardState: boardClone(board) });
+
+    // Canvas margins and board size
+    const marginLeft = 40, marginTop = 20, marginRight = 20, marginBottom = 40;
+    const boardSize = 490;
+    const rows = 7, cols = 7;
+    const cellSize = boardSize / cols;
+    const radius = cellSize * 0.3;
+
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // ******** Utility Functions ********
+    function countPegs(b) {
+      let count = 0;
+      for (let r = 0; r < b.length; r++) {
+        for (let c = 0; c < b[r].length; c++) {
+          if (b[r][c] === 'O') count++;
+        }
+      }
+      return count;
+    }
+
+    function boardClone(b) {
+      return b.map(row => row.slice());
+    }
+
+    // Convert board indices to chess-like coordinates.
+    // Columns: 0 → A, 1 → B, ...; Rows: 0 → 1, 1 → 2, ...
+    function toChessCoords(row, col) {
+      const letter = String.fromCharCode('A'.charCodeAt(0) + col);
+      const number = row + 1;
+      return letter + number;
+    }
+
+    // Generate a unique key for the board state.
+    function boardToKey(b) {
+      return b.map(row => row.join("")).join("|");
+    }
+
+    // ******** Move Validation and Execution ********
+    // Checks if a move from (fromRow, fromCol) to (toRow, toCol) is valid.
+    // Returns the intermediate cell (as an object) if valid; otherwise, null.
+    function isValidMove(b, fromRow, fromCol, toRow, toCol) {
+      let dRow = toRow - fromRow, dCol = toCol - fromCol;
+      if (Math.abs(dRow) === 2 && dCol === 0) {
+        let midRow = fromRow + dRow / 2;
+        if (b[midRow][fromCol] === 'O' && b[toRow][toCol] === '.') {
+          return { midRow: midRow, midCol: fromCol };
+        }
+      } else if (Math.abs(dCol) === 2 && dRow === 0) {
+        let midCol = fromCol + dCol / 2;
+        if (b[fromRow][midCol] === 'O' && b[toRow][toCol] === '.') {
+          return { midRow: fromRow, midCol: midCol };
+        }
+      }
+      return null;
+    }
+
+    // Executes the move (assumes move is valid).
+    function makeMove(b, fromRow, fromCol, toRow, toCol) {
+      let mid = isValidMove(b, fromRow, fromCol, toRow, toCol);
+      if (mid) {
+        b[fromRow][fromCol] = '.';
+        b[mid.midRow][mid.midCol] = '.';
+        b[toRow][toCol] = 'O';
+        return true;
+      }
+      return false;
+    }
+
+    // ******** Drawing Functions ********
+    function drawBoard() {
+      // Clear entire canvas.
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Draw board circles.
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (board[r][c] === " ") continue; // Skip invalid cells.
+          // Compute center based on margins.
+          const cx = marginLeft + c * cellSize + cellSize / 2;
+          const cy = marginTop + r * cellSize + cellSize / 2;
+          let fillColor;
+          if (board[r][c] === "O") {
+            fillColor = (selected && selected.row === r && selected.col === c) ? "blue" : "yellow";
+          } else if (board[r][c] === ".") {
+            fillColor = "black";
+          }
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+          ctx.fillStyle = fillColor;
+          ctx.fill();
+          ctx.strokeStyle = "black";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+      // Draw row labels (numbers) on the left.
+      ctx.fillStyle = "black";
+      ctx.font = "14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (let r = 0; r < rows; r++) {
+        let label = (r + 1).toString();
+        let x = marginLeft / 2;
+        let y = marginTop + r * cellSize + cellSize / 2;
+        ctx.fillText(label, x, y);
+      }
+      // Draw column labels (letters) along the bottom.
+      for (let c = 0; c < cols; c++) {
+        let label = String.fromCharCode('A'.charCodeAt(0) + c);
+        let x = marginLeft + c * cellSize + cellSize / 2;
+        let y = marginTop + boardSize + marginBottom / 2;
+        ctx.fillText(label, x, y);
+      }
+    }
+
+    // ******** Move History UI ********
+    function updateMoveHistoryUI() {
+      const historyDiv = document.getElementById("moveHistory");
+      historyDiv.innerHTML = "";
+      moveHistory.forEach((entry, index) => {
+        const div = document.createElement("div");
+        div.className = "moveStep";
+        // Do not show the "Start" move number.
+        if (index === 0) {
+          div.textContent = "0: Start";
+        } else {
+          div.textContent = index + ": " + entry.moveStr;
+        }
+        // When clicked, backtrace to that state.
+        div.addEventListener("click", () => {
+          board = boardClone(entry.boardState);
+          // Truncate moveHistory to this index.
+          moveHistory = moveHistory.slice(0, index + 1);
+          selected = null;
+          drawBoard();
+          updateHighscore();
+          updateMoveHistoryUI();
+        });
+        historyDiv.appendChild(div);
+      });
+    }
+
+    // ******** Highscore Update ********
+    function updateHighscore() {
+      let current = countPegs(board);
+      if (current < highscore) { highscore = current; }
+      document.getElementById("highscoreDisplay").textContent = "Highscore: " + highscore;
+    }
+
+    // ******** Canvas Click Handler (User Moves) ********
+    canvas.addEventListener("click", function(event) {
+      if (animating) return; // Disable interaction during animation.
+      const rect = canvas.getBoundingClientRect();
+      // Adjust click coordinates for margins.
+      const clickX = event.clientX - rect.left;
+      const clickY = event.clientY - rect.top;
+      // Determine board cell based on margins.
+      const col = Math.floor((clickX - marginLeft) / cellSize);
+      const row = Math.floor((clickY - marginTop) / cellSize);
+      if (row < 0 || row >= rows || col < 0 || col >= cols) return;
+      if (board[row][col] === " ") return; // Ignore invalid cells.
+
+      if (board[row][col] === "O") {
+        // Select/deselect a peg.
+        if (selected && selected.row === row && selected.col === col) {
+          selected = null;
+        } else {
+          selected = { row: row, col: col };
+        }
+      } else if (board[row][col] === ".") {
+        // If a peg is selected, try to move it.
+        if (selected) {
+          let mid = isValidMove(board, selected.row, selected.col, row, col);
+          if (mid) {
+            // Make move.
+            board[selected.row][selected.col] = '.';
+            board[mid.midRow][mid.midCol] = '.';
+            board[row][col] = 'O';
+            // Record the move.
+            let moveStr = toChessCoords(selected.row, selected.col) + "→" + toChessCoords(row, col);
+            moveHistory.push({ moveStr: moveStr, boardState: boardClone(board) });
+            updateMoveHistoryUI();
+            updateHighscore();
+          }
+          selected = null;
+        }
+      }
+      drawBoard();
+    });
+
+    // ******** DFS Solver Implementation ********
+    // DFS to search for a winning solution (one peg in center) or best (minimum pegs).
+    function solveDFS(currentBoard) {
+      let visited = new Set();
+      let bestSolution = { pegCount: countPegs(currentBoard), moves: [] };
+      let solution = dfs(currentBoard, [], visited, bestSolution);
+      return (solution !== null) ? solution : bestSolution.moves;
+    }
+
+    function dfs(bState, moves, visited, bestSolution) {
+      let pegCount = countPegs(bState);
+      // Winning condition: one peg remaining in center (position [3][3]).
+      if (pegCount === 1 && bState[3][3] === 'O') return moves;
+      let moveFound = false;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (bState[r][c] === 'O') {
+            // Possible moves: up, down, left, right (2 cells away).
+            let potentialMoves = [
+              { dr: -2, dc: 0 },
+              { dr: 2, dc: 0 },
+              { dr: 0, dc: -2 },
+              { dr: 0, dc: 2 }
+            ];
+            for (let m of potentialMoves) {
+              let toRow = r + m.dr, toCol = c + m.dc;
+              if (toRow < 0 || toRow >= rows || toCol < 0 || toCol >= cols) continue;
+              let moveData = isValidMove(bState, r, c, toRow, toCol);
+              if (moveData) {
+                moveFound = true;
+                // Clone board and apply move.
+                let newBoard = boardClone(bState);
+                newBoard[r][c] = '.';
+                newBoard[r + m.dr/2][c + m.dc/2] = '.';
+                newBoard[toRow][toCol] = 'O';
+                let newMoves = moves.concat([{ fromRow: r, fromCol: c, toRow: toRow, toCol: toCol }]);
+                let key = boardToKey(newBoard);
+                if (!visited.has(key)) {
+                  visited.add(key);
+                  let result = dfs(newBoard, newMoves, visited, bestSolution);
+                  if (result !== null) return result;
+                }
+              }
+            }
+          }
+        }
+      }
+      // Terminal state: no moves left – update best solution if fewer pegs.
+      if (!moveFound && pegCount < bestSolution.pegCount) {
+        bestSolution.pegCount = pegCount;
+        bestSolution.moves = moves.slice();
+      }
+      return null;
+    }
+
+    // ******** Button Functions ********
+    function resetBoard() {
+      board = initialBoardData.map(row => row.slice());
+      selected = null;
+      moveHistory = [];
+      moveHistory.push({ moveStr: "Start", boardState: boardClone(board) });
+      updateMoveHistoryUI();
+      drawBoard();
+    }
+
+    // Hint: Use DFS from current state and alert the first move (in chess notation).
+    function showHint() {
+      if (animating) return;
+      let solution = solveDFS(boardClone(board));
+      if (solution.length > 0) {
+        let move = solution[0];
+        alert("Hint:\nMove " + toChessCoords(move.fromRow, move.fromCol) +
+              " → " + toChessCoords(move.toRow, move.toCol));
+      } else {
+        alert("No moves available for a solution.");
+      }
+    }
+
+    // Solve: Animate the DFS solution (or best sequence) with 1-second intervals.
+    function animateSolution() {
+      if (animating) return;
+      let solution = solveDFS(boardClone(board));
+      if (solution.length === 0) {
+        alert("No solution available.");
+        return;
+      }
+      animating = true;
+      let i = 0;
+      function step() {
+        if (i < solution.length) {
+          let move = solution[i];
+          makeMove(board, move.fromRow, move.fromCol, move.toRow, move.toCol);
+          // Record the move in history.
+          let moveStr = toChessCoords(move.fromRow, move.fromCol) + "→" + toChessCoords(move.toRow, move.toCol);
+          moveHistory.push({ moveStr: moveStr, boardState: boardClone(board) });
+          updateMoveHistoryUI();
+          drawBoard();
+          updateHighscore();
+          i++;
+          setTimeout(step, 1000);
+        } else {
+          animating = false;
+        }
+      }
+      step();
+    }
+
+    // ******** Set Up Button Listeners ********
+    document.getElementById("resetButton").addEventListener("click", resetBoard);
+    document.getElementById("hintButton").addEventListener("click", showHint);
+    document.getElementById("solveButton").addEventListener("click", animateSolution);
+
+    // ******** Initial Draw and UI Update ********
+    drawBoard();
+    updateMoveHistoryUI();
+    document.getElementById("highscoreDisplay").textContent = "Highscore: " + highscore;
+  </script>
+</body>
+</html>
